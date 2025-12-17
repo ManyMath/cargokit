@@ -6,3 +6,20 @@ for a tutorial on how to use Cargokit.
 
 Example plugin available at https://github.com/irondash/hello_rust_ffi_plugin.
 
+## Precompiled binaries
+The [silence-laboratories' precompiled binaries PR](https://github.com/irondash/cargokit/pull/91), adapting work from flutter_rust_bridge, is included in this repository as a non-default option.  To use it, follow these steps:
+
+1. Create local precompiled binaries using command `precompile-local-binaries`
+
+```sh
+flutter pub run bin/build_tool.dart precompile-local-binaries -v --manifest-dir ../../rust --android-sdk-location=/Users/asdf/Library/Android/sdk --android-ndk-version=28.0.12674087 --android-min-sdk-version=23 --temp-dir tempDir
+```
+
+2. Update `cargokit_options.yaml`
+
+```yaml
+use_local_precompiled_binaries: true
+use_precompiled_binaries: true
+```
+
+3. Commit and/or publish precompiled binaries for a build-free usage option.
