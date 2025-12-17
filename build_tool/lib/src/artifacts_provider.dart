@@ -51,24 +51,36 @@ class ArtifactProvider {
   final CargokitUserOptions userOptions;
 
   Future<Map<Target, List<Artifact>>> getArtifacts(List<Target> targets) async {
-    final result = userOptions.useLocalPrecompiledBinaries
+    final result = <Target, List<Artifact>>{};
+
+    // 1. Try precompiled binaries (remote or local from directory.txt)
+    final precompiled = userOptions.useLocalPrecompiledBinaries
         ? await _getLocalPrecompiledArtifacts(targets)
         : await _getPrecompiledArtifacts(targets);
+    result.addAll(precompiled);
 
-    final pendingTargets = List.of(targets);
-    pendingTargets.removeWhere((element) => result.containsKey(element));
+    // 2. Try local build cache
+    final pendingAfterPrecompiled = targets.where((t) => !result.containsKey(t));
+    if (pendingAfterPrecompiled.isNotEmpty) {
+      final cached = await _getCachedLocalBuilds(pendingAfterPrecompiled.toList());
+      result.addAll(cached);
+    }
+
+    // 3. Build from source for any remaining targets
+    final pendingTargets = targets.where((t) => !result.containsKey(t));
 
     if (pendingTargets.isEmpty) {
       return result;
     }
 
     final rustup = Rustup();
-    for (final target in targets) {
+    for (final target in pendingTargets) {
       final builder = RustBuilder(target: target, environment: environment);
       builder.prepare(rustup);
       _log.info('Building ${environment.crateInfo.packageName} for $target');
       final targetDir = await builder.build();
-      // For local build accept both static and dynamic libraries.
+
+      // Collect artifacts (accept both static and dynamic libraries)
       final artifactNames = <String>{
         ...getArtifactNames(
           target: target,
@@ -83,6 +95,7 @@ class ArtifactProvider {
           remote: false,
         )
       };
+
       final artifacts = artifactNames
           .map((artifactName) => Artifact(
                 path: path.join(targetDir, artifactName),
@@ -90,8 +103,17 @@ class ArtifactProvider {
               ))
           .where((element) => File(element.path).existsSync())
           .toList();
+
       result[target] = artifacts;
+
+      // 4. Save to cache for future builds
+      await _saveToCacheLocalBuilds(
+        target,
+        targetDir,
+        artifacts.map((a) => a.finalFileName).toList(),
+      );
     }
+
     return result;
   }
 
@@ -254,6 +276,105 @@ class ArtifactProvider {
     }
 
     return res;
+  }
+
+  /// Checks for artifacts cached from previous local builds.
+  /// Unlike precompiled binaries, this doesn't require cargokit.yaml configuration.
+  Future<Map<Target, List<Artifact>>> _getCachedLocalBuilds(
+    List<Target> targets,
+  ) async {
+    if (!userOptions.cacheLocalBuilds) {
+      return {};
+    }
+
+    final start = Stopwatch()..start();
+    final crateHash = CrateHash.compute(
+      environment.manifestDir,
+      tempStorage: environment.targetTempDir,
+    );
+    _log.fine('Computed crate hash $crateHash in ${start.elapsedMilliseconds}ms');
+
+    // Include build configuration in cache path to avoid reusing
+    // release artifacts in debug builds or vice versa
+    final configuration = environment.configuration.name;
+    final cachedArtifactsDir = path.join(
+      environment.targetTempDir,
+      'precompiled',
+      crateHash,
+      configuration,
+    );
+
+    final res = <Target, List<Artifact>>{};
+
+    for (final target in targets) {
+      final requiredArtifacts = getArtifactNames(
+        target: target,
+        libraryName: environment.crateInfo.packageName,
+        remote: false, // Use local naming (includes .pdb for Windows)
+      );
+      final artifactsForTarget = <Artifact>[];
+
+      final targetCacheDir = path.join(cachedArtifactsDir, target.rust);
+
+      for (final artifact in requiredArtifacts) {
+        final cachedPath = path.join(targetCacheDir, artifact);
+        if (File(cachedPath).existsSync()) {
+          artifactsForTarget.add(Artifact(
+            path: cachedPath,
+            finalFileName: artifact,
+          ));
+        } else {
+          break; // Missing artifact, can't use cache for this target
+        }
+      }
+
+      // Only use cache if all required artifacts are present
+      if (artifactsForTarget.length == requiredArtifacts.length) {
+        _log.info('Using cached build artifacts for $target ($configuration)');
+        res[target] = artifactsForTarget;
+      }
+    }
+
+    return res;
+  }
+
+  /// Saves build artifacts to the local cache for future reuse.
+  Future<void> _saveToCacheLocalBuilds(
+    Target target,
+    String buildDir,
+    List<String> artifactNames,
+  ) async {
+    if (!userOptions.cacheLocalBuilds) {
+      return;
+    }
+
+    final crateHash = CrateHash.compute(
+      environment.manifestDir,
+      tempStorage: environment.targetTempDir,
+    );
+
+    final configuration = environment.configuration.name;
+    final targetCacheDir = path.join(
+      environment.targetTempDir,
+      'precompiled',
+      crateHash,
+      configuration,
+      target.rust,
+    );
+
+    Directory(targetCacheDir).createSync(recursive: true);
+
+    for (final artifactName in artifactNames) {
+      final sourcePath = path.join(buildDir, artifactName);
+      final destPath = path.join(targetCacheDir, artifactName);
+
+      if (File(sourcePath).existsSync()) {
+        File(sourcePath).copySync(destPath);
+        _log.fine('Cached $artifactName for $target ($configuration)');
+      }
+    }
+
+    _log.info('Saved build artifacts to cache for $target ($configuration)');
   }
 
   Future<void> _tryDownloadArtifacts({
