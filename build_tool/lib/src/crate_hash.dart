@@ -21,6 +21,13 @@ class CrateHash {
     )._compute();
   }
 
+  /// Returns the list of files that contribute to crate identity (src/ files,
+  /// Cargo.toml, Cargo.lock, build.rs, cargokit.yaml). Used by hook/build.dart
+  /// to declare dependencies for rebuild detection.
+  static List<File> enumerateFiles(String manifestDir) {
+    return CrateHash._(manifestDir: manifestDir, tempStorage: null).getFiles();
+  }
+
   CrateHash._({
     required this.manifestDir,
     required this.tempStorage,

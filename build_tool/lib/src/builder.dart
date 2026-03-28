@@ -104,6 +104,26 @@ class BuildEnvironment {
       javaHome: isAndroid ? Environment.javaHome : null,
     );
   }
+
+  /// Creates a [BuildEnvironment] from pre-resolved parameters, for use by
+  /// the pure-Dart hook path where values come from BuildInput fields instead
+  /// of Flutter environment variables.
+  static BuildEnvironment fromBuildInput({
+    required BuildConfiguration configuration,
+    required String manifestDir,
+    required String targetTempDir,
+  }) {
+    final crateOptions = CargokitCrateOptions.load(manifestDir: manifestDir);
+    final crateInfo = CrateInfo.load(manifestDir);
+    return BuildEnvironment(
+      configuration: configuration,
+      crateOptions: crateOptions,
+      targetTempDir: targetTempDir,
+      manifestDir: manifestDir,
+      crateInfo: crateInfo,
+      isAndroid: false,
+    );
+  }
 }
 
 class RustBuilder {

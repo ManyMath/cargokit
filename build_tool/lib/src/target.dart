@@ -100,6 +100,32 @@ class Target {
     return all.firstWhereOrNull((element) => element.rust == triple);
   }
 
+  static final _codeAssetsToRust = {
+    'linux-x64': 'x86_64-unknown-linux-gnu',
+    'linux-arm64': 'aarch64-unknown-linux-gnu',
+    'macos-x64': 'x86_64-apple-darwin',
+    'macos-arm64': 'aarch64-apple-darwin',
+    'windows-x64': 'x86_64-pc-windows-msvc',
+    'windows-arm64': 'aarch64-pc-windows-msvc',
+  };
+
+  /// Returns the [Target] for a code_assets OS and Architecture string pair.
+  ///
+  /// Uses string matching so build_tool stays decoupled from the
+  /// hooks/code_assets packages.
+  static Target forCodeAssets(String os, String architecture) {
+    final key = '$os-$architecture';
+    final rustTriple = _codeAssetsToRust[key];
+    if (rustTriple == null) {
+      throw ArgumentError(
+        'Unsupported OS/Architecture combination: $os/$architecture. '
+        'Supported combinations: linux/x64, linux/arm64, macos/x64, '
+        'macos/arm64, windows/x64, windows/arm64',
+      );
+    }
+    return all.firstWhere((t) => t.rust == rustTriple);
+  }
+
   static List<Target> androidTargets() {
     return all
         .where((element) => element.android != null)
